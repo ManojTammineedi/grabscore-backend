@@ -1,101 +1,96 @@
 # GrabScore AI - Backend Architecture
 
-GrabScore is an AI-powered Buy Now, Pay Later (BNPL) eligibility engine. It leverages transaction data to perform behavioral credit scoring using LLMs (Google Gemini) and integrates with payment providers for EMI processing.
+GrabScore is an AI-powered Buy Now, Pay Later (BNPL) eligibility engine. It leverages transaction data to perform behavioral credit scoring using LLMs (Google Gemini 2.0 Flash) and integrates with PayU LazyPay for real-time EMI processing.
 
-## 🚀 Key Features
+## 🏗️ System Architecture
 
-- **Behavioral Credit Scoring**: Uses Google Gemini to evaluate user behavior across 5 key dimensions:
-  1. Purchase Frequency
-  2. Deal Redemption Rate
-  3. Category Diversification
-  4. GMV Trajectory
-  5. Return Behaviour
-- **MCP Compliance**: Implements a Microservice Communication Protocol (MCP) server for robust transaction data retrieval and fraud velocity checks.
-- **PayU Integration**: Fetches real-time EMI offers and handles payment initiation via PayU LazyPay.
-- **FastAPI Framework**: High-performance, asynchronous Python backend with automated Swagger documentation.
-- **Caching**: Redis-ready (configurable) with local cache fallback for optimized performance.
+The GrabScore backend follows a modular service-oriented architecture, designed for high performance and low-latency AI inference.
 
-## 🛠️ Tech Stack
+```mermaid
+graph TD
+    User((User/Frontend)) -->|API Request| FastAPI[FastAPI Server]
+    
+    subgraph "Core BNPL Engine"
+        FastAPI -->|Check Fraud| MCP[GrabOn MCP Server]
+        FastAPI -->|Generate Score & Narrative| Gemini[Google Gemini AI]
+        FastAPI -->|Fetch EMI Offers| PayU[PayU LazyPay API]
+    end
+    
+    subgraph "Data Layer"
+        MCP -->|Query| DB[(SQLite / SQLAlchemy)]
+        FastAPI -->|Cache| Redis{Redis / Local Cache}
+    end
+    
+    FastAPI -->|Verify| Auth[API Key Middleware]
+```
 
-- **Core**: Python 3.11+, FastAPI
-- **AI**: Google Generative AI (Gemini 2.0 Flash)
-- **Database**: SQLAlchemy (SQLite for development)
-- **Networking**: HTTPX, MCP SDK
-- **Task Runner**: Uvicorn
+## 🛠️ Component Breakdown
 
-## 📋 Prerequisites
+### 1. API Layer (`app/api/`)
+- **[Credit API](file:///GrabScore-AI/grabscore-backend/app/api/credit.py)**: The central orchestrator. Handles `/assess` and `/payu/initiate` endpoints.
+- **[Users/Transactions](file:///GrabScore-AI/grabscore-backend/app/api/transactions.py)**: Manage core entities and demo data retrieval.
 
-- Python 3.11 or higher
-- A Google AI Studio API Key (for Gemini)
-- [Optional] Redis server for production caching
+### 2. Logic Layer (`app/services/`)
+- **[Gemini Service](file:///GrabScore-AI/grabscore-backend/app/services/gemini_service.py)**: Directly integrates with Google Generative AI. It transforms raw transaction JSON into a structured risk narrative and behavioral score.
+- **[PayU Client](file:///GrabScore-AI/grabscore-backend/app/services/payu_client.py)**: Implements the PayU Sandbox redirect flow, including SHA-512 hash generation and EMI plan selection.
+- **[Credit Scoring Engine](file:///GrabScore-AI/grabscore-backend/app/services/credit_scoring.py)**: A deterministic fallback engine that computes scores across 6 dimensions: frequency, redemption, diversification, growth, returns, and velocity.
 
-## ⚙️ Setup Instructions
+### 3. Data Integration Layer
+- **[MCP Server](file:///GrabScore-AI/grabscore-backend/mcp_server.py)**: Implements the Model Context Protocol. Acts as a standardized bridge to fetch transaction history and perform fraud velocity checks, ensuring the LLM receives clean, structured data.
 
-1. **Clone the repository** and navigate to the backend folder.
-2. **Create a virtual environment**:
-   ```bash
-   python -m venv .venv
-   source .venv/bin/activate  # On Windows: .venv\Scripts\activate
-   ```
-3. **Install dependencies**:
-   ```bash
-   pip install -r requirements.txt
-   ```
-4. **Configure Environment Variables**:
-   Create a `.env` file in the root directory (refer to `.env.example` if available):
-   ```env
-   # Database
-   DATABASE_URL=sqlite:///./grabcredit.db
+## 🔄 Core Workflows
 
-   # Gemini Configuration
-   GEMINI_API_KEY=your_gemini_api_key_here
-   GEMINI_MODEL="gemini-flash-latest"
-   USE_GEMINI=true
+### Credit Assessment Flow
+```mermaid
+sequenceDiagram
+    participant FE as Frontend
+    participant BE as FastAPI
+    participant MCP as MCP Server
+    participant AI as Gemini 2.0
+    participant PAYU as PayU API
 
-   # Security
-   API_KEY=grabcredit-dev-key
-   ```
-5. **Start the Server**:
-   ```bash
-   uvicorn app.main:app --reload
-   ```
-   The backend will be available at `http://localhost:8000`.
+    FE->>BE: POST /assess (user_id, amount)
+    BE->>MCP: get_user_transactions(user_id)
+    MCP-->>BE: [Transaction JSON]
+    BE->>MCP: check_fraud_velocity(user_id)
+    MCP-->>BE: {fraud_flagged: bool}
+    BE->>AI: Generate narrative & score
+    AI-->>BE: {score, breakdown, narrative}
+    BE->>PAYU: fetch_emi_offers(amount)
+    PAYU-->>BE: [Offer List]
+    BE-->>FE: Assessment Result + Offers
+```
 
-## 📡 API Endpoints
+### Payment Processing (Redirect Flow)
+1. **Initiation**: Backend generates a unique `txnid`, `hash` (SHA-512), and `bankcode` (e.g., `LPEMI03`).
+2. **Redirect**: Frontend submits a hidden form POSTing to `https://test.payu.in/_payment`.
+3. **Completion**: PayU redirects the user back to the backend-provided `SURL`/`FURL` with status parameters.
 
-### Credit Assessment
-- `POST /api/v1/credit/assess`: Evaluates user eligibility.
-  - **Input**: `user_id`, `requested_amount`
-  - **Output**: Credit score, breakdown, limit, EMI offers, and AI narrative.
+## ⚙️ Setup & Tech Stack
 
-### Payments
-- `POST /api/v1/credit/payu/initiate`: Generates PayU payment parameters for a selected EMI plan.
+- **Framework**: FastAPI (Asynchronous Python)
+- **AI**: Gemini 2.0 Flash
+- **Database**: SQLAlchemy with SQLite (dev) / PostgreSQL (prod ready)
+- **Caching**: Redis (TTL: 5m for assessments, 24h for AI narratives)
 
-### Data & Discovery
-- `GET /api/v1/docs`: Interactive Swagger documentation.
-- `GET /api/v1/health`: Service health check.
-
-## 🧪 Testing
-
-Run the test suite using `pytest`:
+### Quick Start
 ```bash
-pytest tests/
+# Install dependencies
+pip install -r requirements.txt
+
+# Configure .env (Need GEMINI_API_KEY)
+# Start development server
+uvicorn app.main:app --reload
 ```
 
-## 🏗️ Project Structure
+## 📡 API Endpoints Summary
 
-```text
-grabscore-backend/
-├── app/
-│   ├── api/          # API Route handlers
-│   ├── core/         # Configuration & Database setup
-│   ├── models/       # SQLAlchemy models
-│   ├── schemas/      # Pydantic validation schemas
-│   └── services/     # Business logic & AI integrations
-├── mcp_server.py     # MCP Tool implementation
-├── requirements.txt  # Project dependencies
-└── .env              # Environment configuration
-```
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/v1/credit/assess` | POST | Core eligibility check + AI narrative |
+| `/api/v1/credit/payu/initiate` | POST | Generate PayU payment parameters |
+| `/api/v1/credit/score/{user_id}`| GET | Quick cached score lookup |
+| `/api/v1/health` | GET | Logic/Database health check |
 
 ## 📄 License
 Internal Development - GrabScore AI Project.
