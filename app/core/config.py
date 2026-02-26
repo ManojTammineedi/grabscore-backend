@@ -29,6 +29,8 @@ class Settings(BaseSettings):
         "http://localhost:3001",
         "http://127.0.0.1:3000",
         "http://127.0.0.1:3001",
+        "https://grabscore-frontend.vercel.app",
+        "https://grabscore-frontend-git-main-manojtammineedis-projects.vercel.app",
     ]
 
     # API Security

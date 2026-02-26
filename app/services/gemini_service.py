@@ -6,9 +6,11 @@ against credit scoring engine factors.
 
 import json
 import logging
+import hashlib
 import google.generativeai as genai
 
 from app.core.config import get_settings
+from app.core.redis import cache_get, cache_set
 
 logger = logging.getLogger(__name__)
 
@@ -22,15 +24,23 @@ class GeminiService:
     ) -> dict:
         """
         Calls the Google Gemini API to evaluate user behavior based on raw transaction data
-        specifically for the 5 factors:
-        1. Purchase frequency
-        2. Deal redemption rate (quality signal)
-        3. Category diversification
-        4. GMV trajectory over 12 months
-        5. Return behaviour flag
+        specifically for the 5 factors.
+        Includes a caching layer based on the hash of the input data.
         """
         settings = get_settings()
 
+        # 1. Generate a unique fingerprint for this specific input set
+        fingerprint_data = f"{user_name}|{fraud_flagged}|{account_age_days}|{transactions_json}"
+        fingerprint = hashlib.sha256(fingerprint_data.encode()).hexdigest()
+        cache_key = f"gemini:assessment:v1:{fingerprint}"
+
+        # 2. Check cache first
+        cached_result = cache_get(cache_key)
+        if cached_result:
+            logger.info(f"[GEMINI CACHE] Found cached result for {user_name} (hash: {fingerprint[:8]}...)")
+            return cached_result
+
+        # 3. Fallback/Disabled checks
         if not settings.USE_GEMINI or not settings.GEMINI_API_KEY:
             logger.warning("Gemini API key missing or service disabled. Falling back to mock scoring.")
             return GeminiService._generate_mock_fallback(user_name, transactions_json, fraud_flagged, account_age_days)
@@ -100,7 +110,12 @@ Transactions JSON:
             if content.endswith("```"):
                 content = content[:-3]
 
-            return json.loads(content.strip())
+            result = json.loads(content.strip())
+            
+            # 4. Cache the successful result (24h TTL)
+            cache_set(cache_key, result, ttl=86400)
+            
+            return result
 
         except Exception as e:
             logger.error(f"Gemini API Error: {str(e)}")
