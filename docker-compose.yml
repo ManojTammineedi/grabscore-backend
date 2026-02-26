@@ -1,0 +1,20 @@
+version: '3.8'
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: grabscore_backend
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8001:8080"
+    volumes:
+      - ./logs:/app/logs
+    env_file:
+      - .env
+    environment:
+      - APP_NAME=GrabScore
+      - APP_VERSION=0.1.0
+      - API_PREFIX=/api/v1
+      - DATABASE_URL=sqlite:///./grabscore.db
